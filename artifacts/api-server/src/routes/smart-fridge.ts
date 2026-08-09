@@ -8,28 +8,19 @@ import {
   RemoveInventoryItemResponse,
   ResetSystemResponse,
 } from "@workspace/api-zod";
-
-type InventoryItem = {
-  id: string;
-  name: string;
-  type: "packaged" | "produce";
-  barcode: string | null;
-  detectionMethod: string;
-  calories: number;
-  expirationDate: string;
-  storageCondition: string;
-  syncStatus: string;
-  shelf: string;
-};
-
-type TelemetryPacket = {
-  id: string;
-  timestamp: string;
-  temperature: number;
-  humidity: number;
-  ethylene: number;
-  source: string;
-};
+import {
+  clearLiveInventory,
+  clearLiveTelemetry,
+  deleteLiveInventoryItem,
+  getLiveGoogleClients,
+  readLiveInventory,
+  readLiveInventoryItem,
+  readLiveTelemetry,
+  type InventoryItem,
+  type TelemetryPacket,
+  writeLiveInventory,
+  writeLiveTelemetry,
+} from "../lib/smart-fridge-gcp";
 
 const router: IRouter = Router();
 
@@ -86,12 +77,49 @@ for (let index = 0; index < 12; index += 1) {
 }
 
 router.get("/bigtable/telemetry", (_req, res): void => {
-  appendTelemetry();
-  res.json(GetTelemetryResponse.parse(telemetry));
+  const live = getLiveGoogleClients();
+  if (!live) {
+    appendTelemetry();
+    res.json(GetTelemetryResponse.parse(telemetry));
+    return;
+  }
+
+  void (async () => {
+    try {
+      const packet = createTelemetryPacket();
+      await writeLiveTelemetry(live.table, packet);
+      const packets = await readLiveTelemetry(live.table);
+      res.json(GetTelemetryResponse.parse(packets));
+    } catch (error) {
+      _req.log.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        "Bigtable telemetry unavailable; using local stream",
+      );
+      appendTelemetry();
+      res.json(GetTelemetryResponse.parse(telemetry));
+    }
+  })();
 });
 
-router.get("/firestore/inventory", (_req, res): void => {
-  res.json(GetInventoryResponse.parse(inventory));
+router.get("/firestore/inventory", (req, res): void => {
+  const live = getLiveGoogleClients();
+  if (!live) {
+    res.json(GetInventoryResponse.parse(inventory));
+    return;
+  }
+
+  void (async () => {
+    try {
+      inventory = await readLiveInventory(live.firestore);
+      res.json(GetInventoryResponse.parse(inventory));
+    } catch (error) {
+      req.log.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        "Firestore inventory unavailable; using local inventory",
+      );
+      res.json(GetInventoryResponse.parse(inventory));
+    }
+  })();
 });
 
 router.post("/firestore/add-item", (req, res): void => {
@@ -107,8 +135,25 @@ router.post("/firestore/add-item", (req, res): void => {
     ...parsed.data,
     syncStatus: "Synced",
   };
-  inventory = [...inventory, item];
-  res.status(201).json(AddInventoryItemResponse.parse(item));
+  const live = getLiveGoogleClients();
+  void (async () => {
+    try {
+      if (live) {
+        await writeLiveInventory(live.firestore, item);
+        inventory = await readLiveInventory(live.firestore);
+      } else {
+        inventory = [...inventory, item];
+      }
+      res.status(201).json(AddInventoryItemResponse.parse(item));
+    } catch (error) {
+      req.log.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        "Firestore write failed; keeping item in local simulator",
+      );
+      inventory = [...inventory, item];
+      res.status(201).json(AddInventoryItemResponse.parse(item));
+    }
+  })();
 });
 
 router.delete("/firestore/remove-item/:id", (req, res): void => {
@@ -118,29 +163,74 @@ router.delete("/firestore/remove-item/:id", (req, res): void => {
     return;
   }
 
-  const removed = inventory.find((item) => item.id === parsed.data.id);
-  if (!removed) {
-    res.status(404).json({ error: "Inventory item not found" });
-    return;
-  }
+  const live = getLiveGoogleClients();
+  void (async () => {
+    let removed = live
+      ? await readLiveInventoryItem(live.firestore, parsed.data.id)
+      : inventory.find((item) => item.id === parsed.data.id) ?? null;
 
-  inventory = inventory.filter((item) => item.id !== parsed.data.id);
-  res.json(RemoveInventoryItemResponse.parse(removed));
+    if (!removed) {
+      res.status(404).json({ error: "Inventory item not found" });
+      return;
+    }
+
+    try {
+      if (live) {
+        await deleteLiveInventoryItem(live.firestore, parsed.data.id);
+        inventory = await readLiveInventory(live.firestore);
+      } else {
+        inventory = inventory.filter((item) => item.id !== parsed.data.id);
+      }
+      res.json(RemoveInventoryItemResponse.parse(removed));
+    } catch (error) {
+      req.log.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        "Firestore delete failed; keeping document",
+      );
+      res.status(503).json({ error: "Firestore delete failed" });
+    }
+  })().catch((error: unknown) => {
+    req.log.error(
+      { error: error instanceof Error ? error.message : String(error) },
+      "Inventory removal failed",
+    );
+    res.status(503).json({ error: "Firestore is unavailable" });
+  });
 });
 
-router.post("/system/reset", (_req, res): void => {
-  const clearedInventory = inventory.length;
-  const clearedTelemetry = telemetry.length;
-  inventory = [];
-  telemetry = [];
-  sequence = 0;
-  res.json(
-    ResetSystemResponse.parse({
-      clearedInventory,
-      clearedTelemetry,
-      unmountedSensors: 5,
-    }),
-  );
+router.post("/system/reset", (req, res): void => {
+  const live = getLiveGoogleClients();
+  void (async () => {
+    let clearedInventory = inventory.length;
+    let clearedTelemetry = telemetry.length;
+    if (live) {
+      try {
+        clearedInventory = await clearLiveInventory(live.firestore);
+        clearedTelemetry = await clearLiveTelemetry(live.table);
+      } catch (error) {
+        req.log.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          "Live reset partially failed; clearing local simulator",
+        );
+      }
+    }
+    inventory = [];
+    telemetry = [];
+    sequence = 0;
+    res.json(
+      ResetSystemResponse.parse({
+        clearedInventory,
+        clearedTelemetry,
+        unmountedSensors: 5,
+      }),
+    );
+  })().catch((error: unknown) => {
+    req.log.error(
+      { error: error instanceof Error ? error.message : String(error) },
+      "System reset failed",
+    );
+    res.status(503).json({ error: "Google Cloud reset failed" });
+  });
 });
 
 export default router;
