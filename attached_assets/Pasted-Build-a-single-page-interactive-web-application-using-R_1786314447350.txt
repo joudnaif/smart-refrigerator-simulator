@@ -1,0 +1,63 @@
+Build a single-page interactive web application using React, Express, and Tailwind CSS that acts as a Smart Refrigerator & Google Cloud Architecture Simulator. 
+
+1. GOOGLE CLOUD BACKEND SETUP (In-Memory / Managed GCP SDKs)
+Set up a Express backend in Node.js that simulates real Google Cloud Services using official GCP SDK structures:
+- Google Cloud Bigtable Service (`gcp_bigtable_emulator`): Handles continuous time-series environmental data streams (Temp, Humidity, Ethylene Gas).
+- Google Cloud Firestore Service (`gcp_firestore_emulator`): Handles structured CRUD operations (Adding items, scanning barcodes, removing items, calculating expiry, system reset).
+- Expose REST API routes for:
+  * GET `/api/bigtable/telemetry` -> Fetches real-time sensor streams.
+  * GET `/api/firestore/inventory` -> Fetches stored fridge items.
+  * POST `/api/firestore/add-item` -> Processes and stores new food item.
+  * DELETE `/api/firestore/remove-item/:id` -> Deletes a specific item when removed from the fridge and returns it to the shelf drawer.
+  * POST `/api/system/reset` -> Clears all DB records, unmounts all sensors, and moves all items out of the fridge.
+
+2. LAYOUT & UI STRUCTURE
+Create a 3-column interactive visual dashboard:
+- TOP HEADER / CONTROL BAR:
+  * Master Door Toggle: "OPEN FRIDGE DOOR" / "CLOSE FRIDGE DOOR".
+  * System Status Badge: "DOOR CLOSED - SLEEP MODE" or "DOOR OPEN - ACTIVE".
+  * RESET SYSTEM BUTTON (Red Button): Immediately executes the `/api/system/reset` API, clearing all Firestore/Bigtable collections, removing all sensors, and putting all food items back into the Right Panel drawer.
+  * Glowing visual container: "Google Cloud Gateway (Pub/Sub & EventArc)".
+
+- LEFT PANEL (Sensors Palette):
+  Draggable sensor modules with live operational badges (OFF / SLEEP / STREAMING):
+  * Environmental Sensor (Temp, Humidity, Gas) -> [Always Active Stream]
+  * Time-of-Flight (ToF) Depth Sensor -> [Requires Door OPEN]
+  * RGB Camera -> [Requires Door OPEN]
+  * Weight Sensor (Load Cell) -> [Requires Door OPEN]
+  * Barcode Scanner -> [Requires Door OPEN]
+
+- CENTER PANEL (Virtual Open Fridge Canvas):
+  * Visual 2-door refrigerator layout showing 3 main shelves and a bottom produce drawer.
+  * Mounting slots for sensors. When a sensor is dropped into a slot, draw a glowing connector line up to the Google Cloud Gateway box.
+  * Interactive Shelf Slots: Food items can be dropped here.
+
+- RIGHT PANEL (Food Items Drawer & Right Shelf):
+  * Unplaced Food Items container divided into:
+    - Packaged Items: Whole Milk 1L (Barcode: '001234'), Canned Soup (Barcode: '005678').
+    - Fresh Produce: Red Apple (Unpackaged), Yellow Bananas (Unpackaged).
+  * REMOVAL / RETURN BEHAVIOR: 
+    When an item currently inside the fridge is dragged OUT of the fridge and dropped back onto the Right Panel (Right Shelf), instantly trigger a DELETE request to `/api/firestore/remove-item/:id`. Remove it from the database table and place it back into the Right Panel items list.
+
+- BOTTOM PANEL (Dual Google Cloud Databases Live View):
+  Provide two side-by-side real-time database view tabs:
+  1. TAB 1: "Google Cloud Bigtable (Telemetry Stream DB)"
+     - Displays an auto-scrolling log of continuous environmental packets (Timestamp, Temp ~3.5°C, Humidity ~85%, Ethylene ~0.02 ppm) recorded every 2 seconds.
+  2. TAB 2: "Google Cloud Firestore (Inventory Document DB)"
+     - Displays live document records for currently stored items: ID, Item Name, Type, Detection Method, Calories, Expiration Date, Storage Condition, and GCP Sync Status.
+
+3. STATE MACHINE & SIMULATION LOGIC
+- CONSTANT TELEMETRY:
+  - When the Environmental Sensor is placed inside the fridge, stream continuous data packets to the Bigtable API route every 2 seconds.
+- DOOR OPEN/CLOSED RULES:
+  - DOOR CLOSED: ToF, Camera, Barcode, and Weight sensors are in 'SLEEP MODE'. Show an alert if a user tries to move items while the door is closed.
+  - DOOR OPENED: Fire a simulated Pub/Sub event `projects/smart-fridge/topics/door-open` to wake up all attached sensors.
+- ADDING ITEMS & SENSOR REQUIREMENTS:
+  - Packaged items require the Barcode Scanner to be mounted. Dragging a packaged item fires a laser animation, fetches synthetic metadata, and posts to Firestore.
+  - Fresh produce requires the RGB Camera AND Environmental Sensor to be mounted. Dragging produce fires a vision flash animation, calculates expiration dynamically using the current Bigtable temperature average, and posts to Firestore.
+- REMOVING ITEMS:
+  - Dragging an item out of the fridge back to the right drawer deletes the document from Cloud Firestore and updates the inventory state in real-time.
+- FULL SYSTEM RESET:
+  - Clicking the "Reset System" button triggers the API cleanup endpoint, wipes all Bigtable telemetry logs, purges all Firestore documents, unmounts all sensors, and moves all items back to the right shelf drawer.
+
+Make the UI polished, responsive, feature-complete, and visually striking for a cloud computing graduation project presentation. And make it similar to the design of the interface image attached.

@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Smart Fridge Cloud Simulator"
+description = "A polished interactive single-page simulator for a sensor-equipped smart refrigerator, with draggable hardware modules, live telemetry streams, inventory workflows, and simulated Google Cloud Bigtable and Firestore views."
+version = "1.0.0"
+id = "artifacts/smart-fridge-dashboard"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25262
+
+[services.development]
+run = "pnpm --filter @workspace/smart-fridge-dashboard run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/smart-fridge-dashboard", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/smart-fridge-dashboard/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25262"
+BASE_PATH = "/"

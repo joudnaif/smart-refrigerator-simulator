@@ -10,6 +10,12 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: telemetry
+    description: Simulated Bigtable telemetry stream operations
+  - name: inventory
+    description: Simulated Firestore inventory operations
+  - name: system
+    description: Smart fridge system operations
 paths:
   /healthz:
     get:
@@ -24,6 +30,95 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /bigtable/telemetry:
+    get:
+      operationId: getTelemetry
+      tags: [telemetry]
+      summary: Fetch recent environmental telemetry
+      description: Returns the latest simulated temperature, humidity, and ethylene packets.
+      responses:
+        "200":
+          description: Recent telemetry packets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TelemetryPacket"
+  /firestore/inventory:
+    get:
+      operationId: getInventory
+      tags: [inventory]
+      summary: Fetch stored fridge items
+      responses:
+        "200":
+          description: Items currently stored in the simulated Firestore collection
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InventoryItem"
+  /firestore/add-item:
+    post:
+      operationId: addInventoryItem
+      tags: [inventory]
+      summary: Add a food item to the fridge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryItemInput"
+      responses:
+        "201":
+          description: Item added to the simulated Firestore collection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "400":
+          description: Invalid item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /firestore/remove-item/{id}:
+    delete:
+      operationId: removeInventoryItem
+      tags: [inventory]
+      summary: Remove an item from the fridge
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Removed inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "404":
+          description: Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /system/reset:
+    post:
+      operationId: resetSystem
+      tags: [system]
+      summary: Reset the simulated smart fridge system
+      responses:
+        "200":
+          description: Reset summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResetResult"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +128,82 @@ components:
           type: string
       required:
         - status
+    TelemetryPacket:
+      type: object
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+        temperature:
+          type: number
+        humidity:
+          type: number
+        ethylene:
+          type: number
+        source:
+          type: string
+      required: [id, timestamp, temperature, humidity, ethylene, source]
+    InventoryItem:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [packaged, produce]
+        barcode:
+          type: ["string", "null"]
+        detectionMethod:
+          type: string
+        calories:
+          type: number
+        expirationDate:
+          type: string
+        storageCondition:
+          type: string
+        syncStatus:
+          type: string
+        shelf:
+          type: string
+      required: [id, name, type, barcode, detectionMethod, calories, expirationDate, storageCondition, syncStatus, shelf]
+    InventoryItemInput:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [packaged, produce]
+        barcode:
+          type: ["string", "null"]
+        detectionMethod:
+          type: string
+        calories:
+          type: number
+        expirationDate:
+          type: string
+        storageCondition:
+          type: string
+        shelf:
+          type: string
+      required: [name, type, barcode, detectionMethod, calories, expirationDate, storageCondition, shelf]
+    ResetResult:
+      type: object
+      properties:
+        clearedInventory:
+          type: number
+        clearedTelemetry:
+          type: number
+        unmountedSensors:
+          type: number
+      required: [clearedInventory, clearedTelemetry, unmountedSensors]
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
 
