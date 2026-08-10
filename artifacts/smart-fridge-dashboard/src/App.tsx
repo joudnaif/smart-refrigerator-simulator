@@ -98,7 +98,9 @@ function Home() {
   const [toast, setToast] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
 
-  const telemetryQuery = useGetTelemetry({ query: { queryKey: getGetTelemetryQueryKey(), refetchInterval: 2000 } });
+  const environmentalSensorActive = mounted.includes('environmental');
+  const telemetryParams = { environmentalSensorActive };
+  const telemetryQuery = useGetTelemetry(telemetryParams, { query: { queryKey: getGetTelemetryQueryKey(telemetryParams), refetchInterval: 2000 } });
   const inventoryQuery = useGetInventory({ query: { queryKey: getGetInventoryQueryKey(), refetchInterval: 4000 } });
   const addItem = useAddInventoryItem();
   const removeItem = useRemoveInventoryItem();

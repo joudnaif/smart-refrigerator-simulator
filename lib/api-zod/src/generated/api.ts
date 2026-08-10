@@ -18,9 +18,15 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
- * Returns the latest simulated temperature, humidity, and ethylene packets.
+ * Returns recent packets and writes a fresh environmental packet to Bigtable when the sensor is active.
  * @summary Fetch recent environmental telemetry
  */
+export const getTelemetryQueryEnvironmentalSensorActiveDefault = false;
+
+export const GetTelemetryQueryParams = zod.object({
+  "environmentalSensorActive": zod.coerce.boolean().default(getTelemetryQueryEnvironmentalSensorActiveDefault)
+})
+
 export const GetTelemetryResponseItem = zod.object({
   "id": zod.string(),
   "timestamp": zod.string(),

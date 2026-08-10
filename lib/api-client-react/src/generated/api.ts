@@ -21,6 +21,7 @@ import type {
 
 import type {
   ErrorResponse,
+  GetTelemetryParams,
   HealthStatus,
   InventoryItem,
   InventoryItemInput,
@@ -133,21 +134,28 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
 
 
 
-export const getGetTelemetryUrl = () => {
+export const getGetTelemetryUrl = (params?: GetTelemetryParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/bigtable/telemetry`
+  return stringifiedParams.length > 0 ? `/api/bigtable/telemetry?${stringifiedParams}` : `/api/bigtable/telemetry`
 }
 
 /**
- * Returns the latest simulated temperature, humidity, and ethylene packets.
+ * Returns recent packets and writes a fresh environmental packet to Bigtable when the sensor is active.
  * @summary Fetch recent environmental telemetry
  */
-export const getTelemetry = async ( options?: Parameters<typeof customFetch>[1]): Promise<TelemetryPacket[]> => {
+export const getTelemetry = async (params?: GetTelemetryParams, options?: Parameters<typeof customFetch>[1]): Promise<TelemetryPacket[]> => {
 
-  return customFetch<TelemetryPacket[]>(getGetTelemetryUrl(),
+  return customFetch<TelemetryPacket[]>(getGetTelemetryUrl(params),
   {
     ...options,
     method: 'GET'
@@ -160,23 +168,23 @@ export const getTelemetry = async ( options?: Parameters<typeof customFetch>[1])
 
 
 
-export const getGetTelemetryQueryKey = () => {
+export const getGetTelemetryQueryKey = (params?: GetTelemetryParams,) => {
     return [
-    `/api/bigtable/telemetry`
+    `/api/bigtable/telemetry`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetTelemetryQueryOptions = <TData = Awaited<ReturnType<typeof getTelemetry>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTelemetry>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetTelemetryQueryOptions = <TData = Awaited<ReturnType<typeof getTelemetry>>, TError = ErrorType<unknown>>(params?: GetTelemetryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTelemetry>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetTelemetryQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetTelemetryQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTelemetry>>> = ({ signal }) => getTelemetry({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTelemetry>>> = ({ signal }) => getTelemetry(params, { signal, ...requestOptions });
 
 
 
@@ -194,11 +202,11 @@ export type GetTelemetryQueryError = ErrorType<unknown>
  */
 
 export function useGetTelemetry<TData = Awaited<ReturnType<typeof getTelemetry>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTelemetry>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: GetTelemetryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTelemetry>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetTelemetryQueryOptions(options)
+  const queryOptions = getGetTelemetryQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

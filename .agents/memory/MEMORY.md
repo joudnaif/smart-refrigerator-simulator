@@ -1,0 +1,1 @@
+- [Bigtable telemetry schema](bigtable-schema.md) — Smart-fridge telemetry uses the existing `metrics` column family.

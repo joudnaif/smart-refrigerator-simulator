@@ -35,7 +35,14 @@ paths:
       operationId: getTelemetry
       tags: [telemetry]
       summary: Fetch recent environmental telemetry
-      description: Returns the latest simulated temperature, humidity, and ethylene packets.
+      description: Returns recent packets and writes a fresh environmental packet to Bigtable when the sensor is active.
+      parameters:
+        - name: environmentalSensorActive
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: Recent telemetry packets

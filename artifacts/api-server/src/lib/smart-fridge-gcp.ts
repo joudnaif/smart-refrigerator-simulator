@@ -62,6 +62,7 @@ const bigtableTable =
   process.env.BIGTABLE_TABLE_ID ??
   "telemetry";
 const telemetryPrefix = "smart-fridge#";
+const telemetryColumnFamily = "metrics";
 
 let clients: { firestore: Firestore; table: Table } | null = null;
 let clientsInitialized = false;
@@ -69,9 +70,7 @@ let clientsInitialized = false;
 function getGoogleClientOptions(): GoogleClientOptions {
   const rawCredentials = process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
   const projectId =
-    process.env.GOOGLE_CLOUD_PROJECT ??
-    process.env.GCLOUD_PROJECT ??
-    undefined;
+    process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT ?? undefined;
 
   if (!rawCredentials) {
     return { projectId };
@@ -91,7 +90,10 @@ function getGoogleClientOptions(): GoogleClientOptions {
   return { projectId, keyFilename: rawCredentials };
 }
 
-export function getLiveGoogleClients(): { firestore: Firestore; table: Table } | null {
+export function getLiveGoogleClients(): {
+  firestore: Firestore;
+  table: Table;
+} | null {
   if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     return null;
   }
@@ -103,7 +105,10 @@ export function getLiveGoogleClients(): { firestore: Firestore; table: Table } |
   clientsInitialized = true;
   try {
     const options = getGoogleClientOptions();
-    const firestore = new Firestore({ ...options, databaseId: firestoreDatabase });
+    const firestore = new Firestore({
+      ...options,
+      databaseId: firestoreDatabase,
+    });
     const bigtable = new Bigtable(options);
     clients = {
       firestore,
@@ -140,21 +145,34 @@ function readCell(
 }
 
 function rowToTelemetry(row: BigtableRow): TelemetryPacket | null {
-  const timestamp = readCell(row, "telemetry", "timestamp");
-  const temperature = Number(readCell(row, "telemetry", "temperature"));
-  const humidity = Number(readCell(row, "telemetry", "humidity"));
-  const ethylene = Number(readCell(row, "telemetry", "ethylene"));
-  if (!timestamp || !Number.isFinite(temperature) || !Number.isFinite(humidity) || !Number.isFinite(ethylene)) {
+  const timestamp = readCell(row, telemetryColumnFamily, "timestamp");
+  const temperature = Number(
+    readCell(row, telemetryColumnFamily, "temperature"),
+  );
+  const humidity = Number(readCell(row, telemetryColumnFamily, "humidity"));
+  const ethylene = Number(readCell(row, telemetryColumnFamily, "ethylene"));
+  if (
+    !timestamp ||
+    !Number.isFinite(temperature) ||
+    !Number.isFinite(humidity) ||
+    !Number.isFinite(ethylene)
+  ) {
     return null;
   }
 
   return {
-    id: readCell(row, "telemetry", "id") ?? row.id ?? row.key ?? "telemetry-live",
+    id:
+      readCell(row, telemetryColumnFamily, "id") ??
+      row.id ??
+      row.key ??
+      "telemetry-live",
     timestamp,
     temperature,
     humidity,
     ethylene,
-    source: readCell(row, "telemetry", "source") ?? "environmental-sensor-01",
+    source:
+      readCell(row, telemetryColumnFamily, "source") ??
+      "environmental-sensor-01",
   };
 }
 
@@ -164,7 +182,7 @@ export async function writeLiveTelemetry(
 ): Promise<void> {
   const row = table.row(`${telemetryPrefix}${packet.id}`);
   await row.save({
-    telemetry: {
+    [telemetryColumnFamily]: {
       id: packet.id,
       timestamp: packet.timestamp,
       temperature: String(packet.temperature),
@@ -175,12 +193,18 @@ export async function writeLiveTelemetry(
   });
 }
 
-export async function readLiveTelemetry(table: Table): Promise<TelemetryPacket[]> {
-  const [rows] = await table.getRows({ prefix: telemetryPrefix, limit: 40 });
+export async function readLiveTelemetry(
+  table: Table,
+): Promise<TelemetryPacket[]> {
+  // Bigtable's `limit` applies to row-key order, not timestamp order. Since
+  // row keys also include a sequence number, limiting the read here can hide
+  // freshly written packets behind older lexicographically earlier keys.
+  const [rows] = await table.getRows({ prefix: telemetryPrefix });
   return (rows as unknown as BigtableRow[])
     .map(rowToTelemetry)
     .filter((packet): packet is TelemetryPacket => packet !== null)
-    .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+    .sort((left, right) => left.timestamp.localeCompare(right.timestamp))
+    .slice(-40);
 }
 
 export async function clearLiveTelemetry(table: Table): Promise<number> {
@@ -204,7 +228,9 @@ function toInventoryItem(
       typeof data.detectionMethod === "string"
         ? data.detectionMethod
         : "cloud_sync",
-    calories: Number.isFinite(Number(data.calories)) ? Number(data.calories) : 0,
+    calories: Number.isFinite(Number(data.calories))
+      ? Number(data.calories)
+      : 0,
     expirationDate:
       typeof data.expirationDate === "string" ? data.expirationDate : "",
     storageCondition:
@@ -227,10 +253,13 @@ export async function writeLiveInventory(
   firestore: Firestore,
   item: InventoryItem,
 ): Promise<void> {
-  await firestore.collection(firestoreCollection).doc(item.id).set({
-    ...item,
-    updatedAt: new Date().toISOString(),
-  });
+  await firestore
+    .collection(firestoreCollection)
+    .doc(item.id)
+    .set({
+      ...item,
+      updatedAt: new Date().toISOString(),
+    });
 }
 
 export async function readLiveInventoryItem(

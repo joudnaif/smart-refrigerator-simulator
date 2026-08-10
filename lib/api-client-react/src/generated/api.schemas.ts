@@ -70,3 +70,7 @@ export interface ErrorResponse {
   error: string;
 }
 
+export type GetTelemetryParams = {
+environmentalSensorActive?: boolean;
+};
+

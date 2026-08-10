@@ -7,6 +7,7 @@
  */
 
 export * from './errorResponse';
+export * from './getTelemetryParams';
 export * from './healthStatus';
 export * from './inventoryItem';
 export * from './inventoryItemInput';

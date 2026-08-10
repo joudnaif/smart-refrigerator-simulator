@@ -3,6 +3,7 @@ import {
   AddInventoryItemBody,
   AddInventoryItemResponse,
   GetInventoryResponse,
+  GetTelemetryQueryParams,
   GetTelemetryResponse,
   RemoveInventoryItemParams,
   RemoveInventoryItemResponse,
@@ -58,9 +59,10 @@ let sequence = 0;
 function createTelemetryPacket(): TelemetryPacket {
   sequence += 1;
   const phase = sequence % 8;
+  const timestamp = new Date().toISOString();
   return {
-    id: `telemetry-${sequence}`,
-    timestamp: new Date().toISOString(),
+    id: `telemetry-${Date.now()}-${sequence}`,
+    timestamp,
     temperature: Number((3.4 + phase * 0.03).toFixed(2)),
     humidity: Number((84.2 + (phase % 4) * 0.4).toFixed(1)),
     ethylene: Number((0.018 + (phase % 5) * 0.001).toFixed(3)),
@@ -76,26 +78,55 @@ for (let index = 0; index < 12; index += 1) {
   appendTelemetry();
 }
 
-router.get("/bigtable/telemetry", (_req, res): void => {
+router.get("/bigtable/telemetry", (req, res): void => {
+  const rawActive = Array.isArray(req.query.environmentalSensorActive)
+    ? req.query.environmentalSensorActive[0]
+    : req.query.environmentalSensorActive;
+  const parsedQuery = GetTelemetryQueryParams.safeParse({
+    environmentalSensorActive:
+      rawActive === undefined ? false : rawActive === "true",
+  });
+
+  if (!parsedQuery.success) {
+    res.status(400).json({ error: parsedQuery.error.message });
+    return;
+  }
+
+  const environmentalSensorActive =
+    parsedQuery.data.environmentalSensorActive;
   const live = getLiveGoogleClients();
   if (!live) {
-    appendTelemetry();
+    if (environmentalSensorActive) {
+      appendTelemetry();
+    }
     res.json(GetTelemetryResponse.parse(telemetry));
     return;
   }
 
   void (async () => {
     try {
-      const packet = createTelemetryPacket();
-      await writeLiveTelemetry(live.table, packet);
+      if (environmentalSensorActive) {
+        const packet = createTelemetryPacket();
+        await writeLiveTelemetry(live.table, packet);
+        req.log.info(
+          { telemetryId: packet.id },
+          "Environmental telemetry written to Bigtable",
+        );
+      }
       const packets = await readLiveTelemetry(live.table);
       res.json(GetTelemetryResponse.parse(packets));
     } catch (error) {
-      _req.log.warn(
+      req.log.warn(
         { error: error instanceof Error ? error.message : String(error) },
         "Bigtable telemetry unavailable; using local stream",
       );
-      appendTelemetry();
+      if (live) {
+        res.status(503).json({ error: "Bigtable telemetry unavailable" });
+        return;
+      }
+      if (environmentalSensorActive) {
+        appendTelemetry();
+      }
       res.json(GetTelemetryResponse.parse(telemetry));
     }
   })();
