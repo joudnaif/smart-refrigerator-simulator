@@ -1,5 +1,8 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { Bigtable, type Table } from "@google-cloud/bigtable";
 import { Firestore } from "@google-cloud/firestore";
+import { PubSub, type Message } from "@google-cloud/pubsub";
 import { logger } from "./logger";
 
 export type InventoryItem = {
@@ -63,20 +66,34 @@ const bigtableTable =
   "telemetry";
 const telemetryPrefix = "smart-fridge#";
 const telemetryColumnFamily = "metrics";
+const fridgeEventTopicName = "fridge-event";
+const fridgeEventSubscriptionName = "fridge-event-sub";
 
-let clients: { firestore: Firestore; table: Table } | null = null;
+type LiveGoogleClients = {
+  firestore: Firestore;
+  table: Table;
+  pubsub: PubSub;
+};
+
+let clients: LiveGoogleClients | null = null;
 let clientsInitialized = false;
+let subscriberStarted = false;
+let topicReady: Promise<ReturnType<PubSub["topic"]>> | null = null;
 
 function getGoogleClientOptions(): GoogleClientOptions {
   const rawCredentials = process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
   const projectId =
     process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT ?? undefined;
+  const defaultCredentialPath = [
+    resolve(process.cwd(), "service-account.json"),
+    resolve(process.cwd(), "artifacts/api-server/service-account.json"),
+  ].find((candidate) => existsSync(candidate));
 
-  if (!rawCredentials) {
+  if (!rawCredentials && !defaultCredentialPath) {
     return { projectId };
   }
 
-  if (rawCredentials.startsWith("{")) {
+  if (rawCredentials?.startsWith("{")) {
     const serviceAccount = JSON.parse(rawCredentials) as ServiceAccount;
     return {
       projectId: projectId ?? serviceAccount.project_id,
@@ -87,14 +104,146 @@ function getGoogleClientOptions(): GoogleClientOptions {
     };
   }
 
-  return { projectId, keyFilename: rawCredentials };
+  return { projectId, keyFilename: rawCredentials ?? defaultCredentialPath };
+}
+
+function hasConfiguredGoogleCredentials(): boolean {
+  return Boolean(
+    process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim() ||
+      existsSync(resolve(process.cwd(), "service-account.json")) ||
+      existsSync(
+        resolve(process.cwd(), "artifacts/api-server/service-account.json"),
+      ),
+  );
+}
+
+async function getReadyFridgeEventTopic(pubsub: PubSub) {
+  if (!topicReady) {
+    topicReady = (async () => {
+      const topic = pubsub.topic(fridgeEventTopicName);
+      const [exists] = await topic.exists();
+      if (!exists) {
+        await topic.create();
+        logger.info(
+          { topic: fridgeEventTopicName },
+          "Created Google Cloud Pub/Sub topic",
+        );
+      }
+      return topic;
+    })().catch((error: unknown) => {
+      topicReady = null;
+      throw error;
+    });
+  }
+  return topicReady;
+}
+
+async function syncReceivedFridgeEvent(
+  firestore: Firestore,
+  table: Table,
+  message: Message,
+): Promise<void> {
+  const raw = message.data.toString("utf8");
+  const envelope = JSON.parse(raw) as {
+    event?: unknown;
+    data?: unknown;
+    timestamp?: unknown;
+  };
+  const event = typeof envelope.event === "string" ? envelope.event : "UNKNOWN";
+  const data =
+    envelope.data && typeof envelope.data === "object" ? envelope.data : {};
+  const timestamp =
+    typeof envelope.timestamp === "string"
+      ? envelope.timestamp
+      : new Date().toISOString();
+
+  logger.info(
+    `[PUB/SUB RECEIVED] Event: ${event} | Payload: ${JSON.stringify(data)}`,
+  );
+
+  await writeLiveFridgeEvent(table, event, data, timestamp, message.id);
+
+  if (event === "ITEM_ADDED") {
+    await writeLiveInventory(firestore, data as InventoryItem);
+  }
+}
+
+async function startFridgeEventSubscriber(
+  pubsub: PubSub,
+  firestore: Firestore,
+  table: Table,
+): Promise<void> {
+  if (subscriberStarted) return;
+  subscriberStarted = true;
+
+  try {
+    const topic = await getReadyFridgeEventTopic(pubsub);
+    const [topicMetadata] = await topic.getMetadata();
+    const expectedTopicName = topicMetadata.name;
+    const subscription = pubsub.subscription(fridgeEventSubscriptionName);
+    const [exists] = await subscription.exists();
+    if (!exists) {
+      await topic.createSubscription(fridgeEventSubscriptionName);
+      logger.info(
+        { subscription: fridgeEventSubscriptionName },
+        "Created Google Cloud Pub/Sub subscription",
+      );
+    } else {
+      const [subscriptionMetadata] = await subscription.getMetadata();
+      if (subscriptionMetadata.topic !== expectedTopicName) {
+        logger.warn(
+          {
+            subscription: fridgeEventSubscriptionName,
+            existingTopic: subscriptionMetadata.topic,
+            expectedTopic: expectedTopicName,
+          },
+          "Repairing Pub/Sub subscription topic mismatch",
+        );
+        await subscription.delete();
+        await topic.createSubscription(fridgeEventSubscriptionName);
+      }
+    }
+
+    subscription.on("message", (message) => {
+      void syncReceivedFridgeEvent(firestore, table, message)
+        .then(() => message.ack())
+        .catch((error: unknown) => {
+          logger.error(
+            { error: error instanceof Error ? error.message : String(error) },
+            "Pub/Sub message processing failed",
+          );
+          message.nack();
+        });
+    });
+    subscription.on("error", (error: Error) => {
+      logger.error(
+        { error: error.message },
+        "Google Cloud Pub/Sub subscriber error",
+      );
+    });
+    subscription.open();
+    logger.info(
+      {
+        topic: fridgeEventTopicName,
+        subscription: fridgeEventSubscriptionName,
+      },
+      "Google Cloud Pub/Sub subscriber listening",
+    );
+  } catch (error) {
+    subscriberStarted = false;
+    logger.error(
+      { error: error instanceof Error ? error.message : String(error) },
+      "Google Cloud Pub/Sub subscriber could not start",
+    );
+  }
 }
 
 export function getLiveGoogleClients(): {
   firestore: Firestore;
   table: Table;
+  pubsub: PubSub;
 } | null {
-  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  if (!hasConfiguredGoogleCredentials()) {
     return null;
   }
 
@@ -110,10 +259,13 @@ export function getLiveGoogleClients(): {
       databaseId: firestoreDatabase,
     });
     const bigtable = new Bigtable(options);
+    const pubsub = new PubSub(options);
     clients = {
       firestore,
       table: bigtable.instance(bigtableInstance).table(bigtableTable),
+      pubsub,
     };
+    void startFridgeEventSubscriber(pubsub, firestore, clients.table);
     logger.info(
       {
         firestoreCollection,
@@ -132,6 +284,28 @@ export function getLiveGoogleClients(): {
     );
     return null;
   }
+}
+
+export async function publishFridgeEvent(
+  eventType: string,
+  payload: object,
+): Promise<string> {
+  const live = getLiveGoogleClients();
+  if (!live) {
+    throw new Error(
+      "Google Cloud credentials are required to publish fridge events",
+    );
+  }
+
+  const messagePayload = {
+    event: eventType,
+    data: payload,
+    timestamp: new Date().toISOString(),
+  };
+  const topic = await getReadyFridgeEventTopic(live.pubsub);
+  return topic.publishMessage({
+    data: Buffer.from(JSON.stringify(messagePayload), "utf8"),
+  });
 }
 
 function readCell(
@@ -193,6 +367,25 @@ export async function writeLiveTelemetry(
   });
 }
 
+export async function writeLiveFridgeEvent(
+  table: Table,
+  eventType: string,
+  payload: object,
+  timestamp: string,
+  messageId: string,
+): Promise<void> {
+  const row = table.row(`fridge-event#${messageId}`);
+  await row.save({
+    [telemetryColumnFamily]: {
+      event: eventType,
+      data: JSON.stringify(payload),
+      timestamp,
+      messageId,
+      source: "google-cloud-pubsub",
+    },
+  });
+}
+
 export async function readLiveTelemetry(
   table: Table,
 ): Promise<TelemetryPacket[]> {
@@ -208,7 +401,8 @@ export async function readLiveTelemetry(
 }
 
 export async function clearLiveTelemetry(table: Table): Promise<number> {
-  const [rows] = await table.getRows({ prefix: telemetryPrefix });
+  // Fetch all rows in the table (includes both 'smart-fridge#' telemetry and 'fridge-event#' logs)
+  const [rows] = await table.getRows();
   const liveRows = rows as unknown as BigtableRow[];
   await Promise.all(liveRows.map((row) => row.delete()));
   return liveRows.length;

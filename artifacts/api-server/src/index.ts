@@ -15,11 +15,12 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
+// FIX: Bind to "0.0.0.0" so Cloud Run can route external traffic to the container
+app.listen(port, "0.0.0.0", (err: any) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
   }
 
-  logger.info({ port }, "Server listening");
+  logger.info({ port }, "Server listening on 0.0.0.0");
 });

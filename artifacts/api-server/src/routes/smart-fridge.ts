@@ -14,6 +14,7 @@ import {
   clearLiveTelemetry,
   deleteLiveInventoryItem,
   getLiveGoogleClients,
+  publishFridgeEvent,
   readLiveInventory,
   readLiveInventoryItem,
   readLiveTelemetry,
@@ -172,6 +173,11 @@ router.post("/firestore/add-item", (req, res): void => {
       if (live) {
         await writeLiveInventory(live.firestore, item);
         inventory = await readLiveInventory(live.firestore);
+        const messageId = await publishFridgeEvent("ITEM_ADDED", item);
+        req.log.info(
+          { messageId },
+          `[PUB/SUB PUBLISHED] Published ITEM_ADDED for item: ${item.name}`,
+        );
       } else {
         inventory = [...inventory, item];
       }
