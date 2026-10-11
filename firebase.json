@@ -1,0 +1,16 @@
+{
+  "hosting": {
+    "public": "artifacts/smart-fridge-dashboard/dist/public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
