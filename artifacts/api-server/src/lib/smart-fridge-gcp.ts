@@ -107,15 +107,18 @@ function getGoogleClientOptions(): GoogleClientOptions {
   return { projectId, keyFilename: rawCredentials ?? defaultCredentialPath };
 }
 
+
 function hasConfiguredGoogleCredentials(): boolean {
   return Boolean(
     process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim() ||
-      existsSync(resolve(process.cwd(), "service-account.json")) ||
-      existsSync(
-        resolve(process.cwd(), "artifacts/api-server/service-account.json"),
-      ),
+    existsSync(resolve(process.cwd(), "service-account.json")) ||
+    existsSync(
+      resolve(process.cwd(), "artifacts/api-server/service-account.json"),
+    ) ||
+    process.env.K_SERVICE,
   );
 }
+
 
 async function getReadyFridgeEventTopic(pubsub: PubSub) {
   if (!topicReady) {

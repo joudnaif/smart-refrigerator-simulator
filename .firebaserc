@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "smart-refrigerator-simulator"
-  }
+    "default": "smart-refrigerator-simulator",
+    "original": "smart-refrigerator-505022"
+  },
+  "targets": {},
+  "etags": {}
 }

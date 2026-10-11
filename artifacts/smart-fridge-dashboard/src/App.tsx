@@ -73,42 +73,42 @@ const sensors: Array<{
   Icon: typeof Activity;
   requiresOpen: boolean;
 }> = [
-  {
-    kind: "environmental",
-    name: "Environmental",
-    detail: "Temp · humidity · gas",
-    Icon: Thermometer,
-    requiresOpen: false,
-  },
-  {
-    kind: "tof",
-    name: "ToF depth",
-    detail: "Shelf occupancy",
-    Icon: ScanLine,
-    requiresOpen: true,
-  },
-  {
-    kind: "camera",
-    name: "RGB camera",
-    detail: "Vision recognition",
-    Icon: Camera,
-    requiresOpen: true,
-  },
-  {
-    kind: "weight",
-    name: "Load cell",
-    detail: "Weight sensing",
-    Icon: Gauge,
-    requiresOpen: true,
-  },
-  {
-    kind: "barcode",
-    name: "Barcode scanner",
-    detail: "Packaged metadata",
-    Icon: Barcode,
-    requiresOpen: true,
-  },
-];
+    {
+      kind: "environmental",
+      name: "Environmental",
+      detail: "Temp · humidity · gas",
+      Icon: Thermometer,
+      requiresOpen: false,
+    },
+    {
+      kind: "tof",
+      name: "ToF depth",
+      detail: "Shelf occupancy",
+      Icon: ScanLine,
+      requiresOpen: true,
+    },
+    {
+      kind: "camera",
+      name: "RGB camera",
+      detail: "Vision recognition",
+      Icon: Camera,
+      requiresOpen: true,
+    },
+    {
+      kind: "weight",
+      name: "Load cell",
+      detail: "Weight sensing",
+      Icon: Gauge,
+      requiresOpen: true,
+    },
+    {
+      kind: "barcode",
+      name: "Barcode scanner",
+      detail: "Packaged metadata",
+      Icon: Barcode,
+      requiresOpen: true,
+    },
+  ];
 
 const drawerFoods: DrawerFood[] = [
   {
@@ -180,11 +180,11 @@ function Home() {
   const resetSystem = useResetSystem();
 
   const telemetry = useMemo<TelemetryPacket[]>(
-    () => telemetryQuery.data ?? [],
+    () => Array.isArray(telemetryQuery.data) ? telemetryQuery.data : [],
     [telemetryQuery.data],
   );
   const inventory = useMemo<InventoryItem[]>(
-    () => inventoryQuery.data ?? [],
+    () => Array.isArray(inventoryQuery.data) ? inventoryQuery.data : [],
     [inventoryQuery.data],
   );
   const assignedIds = useMemo(
@@ -313,7 +313,7 @@ function Home() {
     }
     const averageTemp = telemetry.length
       ? telemetry.reduce((sum, packet) => sum + packet.temperature, 0) /
-        telemetry.length
+      telemetry.length
       : 3.5;
     const input: InventoryItemInput = {
       name: draggingFood.name,
